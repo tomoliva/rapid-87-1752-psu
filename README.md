@@ -5,6 +5,8 @@ Python GUI controller for the Rapid Electronics 87-1752 (and compatible) 30V/3A 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-Public%20Domain-green.svg)
 
+![Rapid 87-1752 Front Panel](images/front_panel.jpg)
+
 ## Supported Hardware
 
 This software works with several rebadged versions of the same Chinese OEM power supply:
@@ -84,29 +86,7 @@ See [PROTOCOL.md](PROTOCOL.md) for the complete RS-485 command reference.
 
 ## Screenshots
 
-```
-┌─────────────────────────────────────────────────┐
-│ PSU Control - Rapid 87-1752                     │
-├─────────────────────────────────────────────────┤
-│ Connection: /dev/ttyUSB0  Addr: 01  [Connected] │
-├─────────────────────────────────────────────────┤
-│        ┌────────┐      ┌────────┐               │
-│        │ 12.00  │      │ 0.500  │               │
-│        │ Volts  │      │ Amps   │               │
-│        └────────┘      └────────┘               │
-│                    CV                           │
-├─────────────────────────────────────────────────┤
-│ Voltage: [====|=========] 12.0V  [Set V]        │
-│ Current: [==|===========] 1.00A  [Set I]        │
-├─────────────────────────────────────────────────┤
-│     [OUTPUT ON]    [Exit Remote]  [Refresh]     │
-├─────────────────────────────────────────────────┤
-│ [3.3V] [5V] [9V] [12V] [24V]                    │
-├─────────────────────────────────────────────────┤
-│ LiPo: 3S (12.3V) @ 1.00A  [Start Charge]        │
-│ Phase: Idle   Time: 00:00:00   Charged: 0 mAh   │
-└─────────────────────────────────────────────────┘
-```
+![Python GUI](images/gui_screenshot.jpg)
 
 ## Known Issues
 
@@ -128,4 +108,3 @@ Issues and pull requests welcome. This project originated from reverse-engineeri
 ## License
 
 Public Domain. Use freely, share freely, modify freely.
-# rapid-87-1752-psu
