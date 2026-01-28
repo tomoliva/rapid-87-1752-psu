@@ -128,3 +128,4 @@ Issues and pull requests welcome. This project originated from reverse-engineeri
 ## License
 
 Public Domain. Use freely, share freely, modify freely.
+# rapid-87-1752-psu
