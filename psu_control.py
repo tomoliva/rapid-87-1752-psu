@@ -56,6 +56,9 @@ class PSUSerial:
         self.baudrate = baudrate
         self.serial: Optional[serial.Serial] = None
         self.lock = threading.Lock()
+        # Dynamic limits from GMAX - initialized to common defaults
+        self.max_voltage: float = 31.0
+        self.max_current: float = 3.10
 
     def connect(self) -> bool:
         """Connect to the PSU"""
@@ -121,7 +124,7 @@ class PSUSerial:
 
     # Query commands
     def get_max(self) -> tuple[float, float]:
-        """Get max voltage and current ratings"""
+        """Get max voltage and current ratings from PSU via GMAX command"""
         resp = self.send_command("GMAX")
         if resp and "OK" in resp:
             data = resp.replace("OK", "").replace("\r", "").strip()
@@ -129,10 +132,13 @@ class PSUSerial:
                 try:
                     v = int(data[:3]) / 10.0
                     c = int(data[3:6]) / 100.0
+                    # Store for use by set_voltage/set_current clamping
+                    self.max_voltage = v
+                    self.max_current = c
                     return (v, c)
                 except ValueError:
                     pass
-        return (31.0, 3.10)
+        return (self.max_voltage, self.max_current)
 
     def get_setpoints(self) -> tuple[float, float]:
         """Get voltage and current setpoints"""
@@ -172,7 +178,7 @@ class PSUSerial:
                 return int(data[:3]) / 10.0
             except ValueError:
                 pass
-        return 31.0
+        return self.max_voltage
 
     # Control commands
     def enter_remote(self) -> bool:
@@ -186,23 +192,26 @@ class PSUSerial:
         return "OK" in resp
 
     def set_voltage(self, voltage: float) -> bool:
-        """Set output voltage (0.0 - 31.0V)"""
+        """Set output voltage (clamped to PSU max from GMAX)"""
         v = int(voltage * 10)
-        v = max(0, min(310, v))
+        max_v = int(self.max_voltage * 10)
+        v = max(0, min(max_v, v))
         resp = self.send_command_with_params("VOLT", f"{v:03d}")
         return "OK" in resp
 
     def set_current(self, current: float) -> bool:
-        """Set current limit (0.00 - 3.10A)"""
+        """Set current limit (clamped to PSU max from GMAX)"""
         c = int(current * 100)
-        c = max(0, min(310, c))
+        max_c = int(self.max_current * 100)
+        c = max(0, min(max_c, c))
         resp = self.send_command_with_params("CURR", f"{c:03d}")
         return "OK" in resp
 
     def set_ovp(self, voltage: float) -> bool:
-        """Set OVP limit"""
+        """Set OVP limit (clamped to PSU max from GMAX)"""
         v = int(voltage * 10)
-        v = max(0, min(310, v))
+        max_v = int(self.max_voltage * 10)
+        v = max(0, min(max_v, v))
         resp = self.send_command_with_params("SOVP", f"{v:03d}")
         return "OK" in resp
 
@@ -615,10 +624,11 @@ class PSUControlGUI:
             text=f"V: {self.state.voltage_set:.1f} V  |  I: {self.state.current_set:.2f} A  |  OVP: {self.state.ovp_limit:.1f} V"
         )
 
-        # Update sliders to match
+        # Update sliders to match PSU limits
         self.voltage_scale.config(to=self.state.max_voltage)
         self.current_scale.config(to=self.state.max_current)
 
+        self.log(f"PSU max: {self.state.max_voltage:.1f}V / {self.state.max_current:.2f}A")
         self.log(f"Setpoints: {self.state.voltage_set:.1f}V, {self.state.current_set:.2f}A")
 
     def toggle_remote(self):
