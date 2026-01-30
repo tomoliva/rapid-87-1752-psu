@@ -14,8 +14,12 @@ import sys
 import platform
 import os
 import glob
+import fcntl
 from dataclasses import dataclass
 from typing import Optional, Callable
+
+# USB reset ioctl constant
+USBDEVFS_RESET = 21780
 
 
 def check_port_available(port: str) -> tuple[bool, str]:
@@ -100,6 +104,84 @@ def check_usb_power_management() -> list[str]:
         )
 
     return warnings
+
+
+def reset_usb_device(port: str) -> bool:
+    """Reset USB device for a serial port (Linux only). Returns True if successful."""
+    if platform.system() != "Linux":
+        return False
+
+    try:
+        # Find the USB device path for this serial port
+        tty_name = os.path.basename(port)
+        device_path = f"/sys/class/tty/{tty_name}/device"
+
+        if not os.path.exists(device_path):
+            return False
+
+        # Navigate up to find USB device
+        real_path = os.path.realpath(device_path)
+        usb_device = os.path.dirname(os.path.dirname(real_path))
+
+        # Method 1: Try authorized attribute (deauthorize/reauthorize)
+        auth_path = os.path.join(usb_device, "authorized")
+        if os.path.exists(auth_path):
+            try:
+                with open(auth_path, 'w') as f:
+                    f.write('0')
+                time.sleep(0.5)
+                with open(auth_path, 'w') as f:
+                    f.write('1')
+                print("USB reset via authorized attribute")
+                return True
+            except PermissionError:
+                pass  # Try next method
+
+        # Method 2: Try ioctl reset
+        busnum_path = os.path.join(usb_device, "busnum")
+        devnum_path = os.path.join(usb_device, "devnum")
+
+        if os.path.exists(busnum_path) and os.path.exists(devnum_path):
+            with open(busnum_path) as f:
+                busnum = int(f.read().strip())
+            with open(devnum_path) as f:
+                devnum = int(f.read().strip())
+
+            usb_dev_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
+            if os.path.exists(usb_dev_path):
+                try:
+                    fd = os.open(usb_dev_path, os.O_WRONLY)
+                    try:
+                        fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                        print("USB reset via ioctl")
+                        return True
+                    finally:
+                        os.close(fd)
+                except PermissionError:
+                    pass  # Try next method
+
+        # Method 3: Try driver unbind/rebind
+        driver_path = os.path.join(real_path, "driver")
+        if os.path.islink(driver_path):
+            driver = os.path.realpath(driver_path)
+            dev_id = os.path.basename(os.path.dirname(real_path))
+            unbind_path = os.path.join(driver, "unbind")
+            bind_path = os.path.join(driver, "bind")
+            try:
+                with open(unbind_path, 'w') as f:
+                    f.write(dev_id)
+                time.sleep(0.5)
+                with open(bind_path, 'w') as f:
+                    f.write(dev_id)
+                print("USB reset via driver unbind/rebind")
+                return True
+            except PermissionError:
+                pass
+
+    except (OSError, ValueError) as e:
+        print(f"USB reset failed: {e}")
+
+    return False
 
 
 @dataclass
@@ -613,8 +695,11 @@ class PSUControlGUI:
         self.connect_btn = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
         self.connect_btn.grid(row=0, column=4, padx=5)
 
+        self.reset_usb_btn = ttk.Button(conn_frame, text="Reset USB", command=self._reset_usb)
+        self.reset_usb_btn.grid(row=0, column=5, padx=5)
+
         self.status_label = ttk.Label(conn_frame, text="Disconnected", foreground="red")
-        self.status_label.grid(row=0, column=5, padx=10)
+        self.status_label.grid(row=0, column=6, padx=10)
 
         # === Output Display Frame ===
         display_frame = ttk.LabelFrame(main, text="Output", padding=10)
@@ -874,6 +959,7 @@ class PSUControlGUI:
             self.status_label.config(text="Disconnected", foreground="red")
             self._update_port_indicator(False)
             self.log("Disconnected")
+            self.root.title("PSU Control - Disconnected")
         else:
             port = self.port_var.get()
             self.last_selected_port = port
@@ -910,6 +996,46 @@ class PSUControlGUI:
                     self.log("No PSU detected on port")
                     self.status_label.config(text="No Response", foreground="orange")
                     messagebox.showerror("Connection Failed", f"No PSU detected on {port}\n\nTried Rapid/Manson and SCPI protocols.")
+
+    def _reset_usb(self):
+        """Reset USB device for the selected port"""
+        port = self.port_var.get()
+
+        # Disconnect first if connected
+        if self.state.connected:
+            self.stop_polling()
+            if self.state.remote_mode:
+                self.psu.exit_remote()
+                self.state.remote_mode = False
+            self.psu.disconnect()
+            self.state.connected = False
+            self.connect_btn.config(text="Connect")
+            self._update_port_indicator(False)
+
+        self.log(f"Resetting USB for {port}...")
+        self.status_label.config(text="Resetting USB...", foreground="orange")
+        self.root.update()
+
+        if reset_usb_device(port):
+            self.log("USB reset successful, waiting for device...")
+            time.sleep(2)  # Give device time to re-enumerate
+            self.status_label.config(text="Reset OK", foreground="green")
+            self.log("Device ready, you can reconnect")
+        else:
+            self.log("USB reset failed (may need root privileges)")
+            self.status_label.config(text="Reset Failed", foreground="red")
+            if platform.system() == "Linux":
+                messagebox.showwarning(
+                    "USB Reset Failed",
+                    "USB reset requires root privileges.\n\n"
+                    "Try running with sudo, or manually unplug/replug the adapter."
+                )
+            else:
+                messagebox.showinfo(
+                    "USB Reset",
+                    "USB reset is only supported on Linux.\n\n"
+                    "Please manually unplug/replug the adapter."
+                )
 
     def start_polling(self):
         """Start background polling thread"""
@@ -1127,8 +1253,18 @@ class PSUControlGUI:
         else:
             # Check if our port reappeared
             if port in available_ports and self.reconnect_attempts < self.max_reconnect_attempts:
-                self.log(f"Port {port} detected, reconnecting...")
                 self.reconnect_attempts += 1
+
+                # Try USB reset on first retry
+                if self.reconnect_attempts == 1:
+                    self.log(f"Port {port} detected, attempting USB reset...")
+                    if reset_usb_device(port):
+                        self.log("USB reset successful")
+                        time.sleep(1)  # Give device time to re-enumerate
+                    else:
+                        self.log("USB reset not available, trying direct reconnect...")
+
+                self.log(f"Reconnecting (attempt {self.reconnect_attempts})...")
                 detected_psu = detect_psu_protocol(port)
                 if detected_psu:
                     self.psu = detected_psu
