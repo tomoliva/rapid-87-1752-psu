@@ -226,12 +226,39 @@ class PSUSerial:
         return "OK" in resp
 
 
+def guess_psu_model(max_voltage: float, max_current: float) -> str:
+    """Guess PSU model from GMAX values"""
+    # Known OEM variants based on max ratings
+    models = {
+        (30.0, 3.00): "Rapid 87-1752 / PeakTech 1860 / Manson NDP-4303",
+        (30.0, 3.10): "Rapid 87-1752 / PeakTech 1860 / Manson NDP-4303",
+        (18.0, 5.00): "Manson NDP-4185",
+        (60.0, 1.50): "Manson NDP-4601",
+    }
+
+    # Try exact match first
+    key = (max_voltage, max_current)
+    if key in models:
+        return models[key]
+
+    # Fuzzy match based on voltage class
+    if 29.0 <= max_voltage <= 31.0 and 2.5 <= max_current <= 3.5:
+        return "30V/3A Class PSU"
+    elif 17.0 <= max_voltage <= 19.0 and 4.5 <= max_current <= 5.5:
+        return "18V/5A Class PSU"
+    elif 59.0 <= max_voltage <= 61.0 and 1.0 <= max_current <= 2.0:
+        return "60V/1.5A Class PSU"
+
+    # Unknown - show actual specs
+    return f"{max_voltage:.0f}V/{max_current:.1f}A PSU"
+
+
 class PSUControlGUI:
     """Main GUI application"""
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("PSU Control - Rapid 87-1752")
+        self.root.title("PSU Control - Connecting...")
         self.root.resizable(True, True)
 
         self.psu = PSUSerial()
@@ -616,8 +643,10 @@ class PSUControlGUI:
         # Get OVP
         self.state.ovp_limit = self.psu.get_ovp()
 
-        # Get max ratings
+        # Get max ratings and update window title
         self.state.max_voltage, self.state.max_current = self.psu.get_max()
+        model = guess_psu_model(self.state.max_voltage, self.state.max_current)
+        self.root.title(f"PSU Control - {model}")
 
         # Update setpoint label
         self.setpoint_label.config(
