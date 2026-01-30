@@ -1,0 +1,15 @@
+# Allow non-root users to reset USB serial adapters
+# Install: sudo cp 99-usb-serial-reset.rules /etc/udev/rules.d/
+# Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# CH340/CH341 USB-Serial (common USB-RS485 adapters)
+SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", MODE="0666"
+
+# FTDI USB-Serial adapters
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", MODE="0666"
+
+# Prolific PL2303 USB-Serial
+SUBSYSTEM=="usb", ATTR{idVendor}=="067b", ATTR{idProduct}=="2303", MODE="0666"
+
+# CP210x USB-Serial (Silicon Labs)
+SUBSYSTEM=="usb", ATTR{idVendor}=="10c4", MODE="0666"

@@ -251,7 +251,12 @@ class PSUSerial:
     def disconnect(self):
         """Disconnect from the PSU"""
         if self.serial and self.serial.is_open:
-            self.serial.close()
+            try:
+                self.serial.reset_input_buffer()
+                self.serial.reset_output_buffer()
+                self.serial.close()
+            except Exception:
+                pass
         self.serial = None
 
     def send_command(self, cmd: str) -> str:
@@ -433,7 +438,12 @@ class PSUSCPI:
     def disconnect(self):
         """Disconnect from the PSU"""
         if self.serial and self.serial.is_open:
-            self.serial.close()
+            try:
+                self.serial.reset_input_buffer()
+                self.serial.reset_output_buffer()
+                self.serial.close()
+            except Exception:
+                pass
         self.serial = None
 
     def send_command(self, cmd: str) -> str:
@@ -580,7 +590,18 @@ def detect_psu_protocol(port: str, baudrate: int = 9600):
         if identity and ("ARRAY" in identity.upper() or "," in identity):
             print(f"Detected SCPI PSU: {identity}")
             return psu
+        # SCPI command may have confused a non-SCPI PSU - send CR to clear its buffer
+        if psu.serial and psu.serial.is_open:
+            try:
+                psu.serial.write(b'\r')
+                psu.serial.flush()
+                time.sleep(0.2)
+                psu.serial.reset_input_buffer()
+            except Exception:
+                pass
         psu.disconnect()
+        # Wait for port to fully release before trying next protocol
+        time.sleep(0.3)
 
     # Try Rapid/Manson protocol
     psu = PSUSerial(port, '01', baudrate)

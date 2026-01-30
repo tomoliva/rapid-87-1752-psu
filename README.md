@@ -1,6 +1,6 @@
 # Rapid 87-1752 PSU Control
 
-Python GUI controller for the Rapid Electronics 87-1752 (and compatible) 30V/3A programmable power supply via RS-485.
+Python GUI controller for programmable power supplies via RS-485/serial interface. Supports multiple protocols and PSU families.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-Public%20Domain-green.svg)
@@ -9,25 +9,41 @@ Python GUI controller for the Rapid Electronics 87-1752 (and compatible) 30V/3A 
 
 ## Supported Hardware
 
-This software works with several rebadged versions of the same Chinese OEM power supply:
+### Rapid/Manson Protocol (Auto-detected)
 
-| Brand | Model |
-|-------|-------|
-| Rapid Electronics | 87-1752 |
-| PeakTech | 1860 |
-| Manson | NDP-4303, NDP-4185, NDP-4601 |
-| Voltcraft | PPS series |
+| Brand | Model | Voltage/Current |
+|-------|-------|-----------------|
+| Rapid Electronics | 87-1752 | 30V/3A |
+| PeakTech | 1860 | 30V/3A |
+| Manson | NDP-4303 | 30V/3A |
+| Manson | NDP-4185 | 18V/5A |
+| Manson | NDP-4601 | 60V/1.5A |
+| Voltcraft | PPS series | Various |
 
-All use identical RS-485 protocol.
+### SCPI Protocol (Auto-detected)
+
+| Brand | Model | Voltage/Current |
+|-------|-------|-----------------|
+| Array Electronic | 3664A | 120V/4.2A |
+| Array Electronic | 3663A | 80V/6.5A |
+| Array Electronic | 3662A | 60V/8.5A |
+| Array Electronic | 3661A | 40V/12A |
+| Array Electronic | 3660A | 30V/16A |
+
+The software auto-detects the protocol and PSU model on connection.
 
 ## Features
 
-- Real-time voltage/current monitoring
+- **Protocol auto-detection** - automatically identifies PSU type (SCPI or Rapid/Manson)
+- **Dynamic limits** - reads max voltage/current from PSU, adjusts controls accordingly
+- **Model identification** - detects PSU model and displays in window title
+- Real-time voltage/current monitoring with large LED-style display
 - Voltage and current control with sliders
 - Quick presets (3.3V, 5V, 9V, 12V, 24V)
 - LiPo battery charger (CC/CV with termination detection)
 - Auto-reconnect on USB disconnect/reconnect
-- Multi-unit support (addresses 00-30)
+- **USB reset button** - recover stuck serial adapters without unplugging (Linux)
+- Multi-unit support (addresses 00-30 for Rapid/Manson protocol)
 
 ## Requirements
 
@@ -53,13 +69,22 @@ Tkinter is included with most Python installations.
 3. Add 120Ω termination resistor across A+ and B-
 4. Set PSU address via front panel (default: 01)
 
-## Usage
+## Installation
+
+### Windows
+
+Download `psu_control.exe` from the [Releases](../../releases) page. No Python installation required.
+
+### Linux / macOS
 
 ```bash
+pip install pyserial
 python psu_control.py
 ```
 
-The GUI will auto-detect the serial port and attempt connection on startup.
+## Usage
+
+The GUI will auto-detect the serial port and PSU protocol on startup. The window title shows the detected PSU model.
 
 ### LiPo Charging
 
@@ -69,16 +94,32 @@ The GUI will auto-detect the serial port and attempt connection on startup.
 4. Click "Start Charge"
 5. Charging stops automatically when current drops below termination threshold
 
-## Linux: Prevent USB Suspend
+## Linux: USB Troubleshooting
 
-If using a CH340-based adapter, USB autosuspend can cause disconnects. Install the udev rule:
+### Prevent USB Autosuspend
+
+USB autosuspend can cause disconnects with CH340/FTDI adapters. Install the udev rule:
 
 ```bash
-sudo cp 99-ch340-no-suspend.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
+sudo cp 99-usb-serial-reset.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Then reconnect the adapter.
+
+### USB Reset
+
+If your serial adapter becomes unresponsive, click the "Reset USB" button in the GUI. This attempts to reset the USB device without unplugging. Note: May require root privileges or appropriate udev rules.
+
+## Windows: USB Troubleshooting
+
+If you experience connection drops on Windows:
+
+1. **Device Manager > USB Root Hub > Power Management**
+   - Uncheck "Allow computer to turn off this device"
+2. **Power Options > USB settings > USB selective suspend**
+   - Set to "Disabled"
+3. **Install CH340 driver** if using a CH340-based adapter
 
 ## Protocol Documentation
 
