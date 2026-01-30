@@ -409,22 +409,26 @@ class PSUControlGUI:
         v_frame = ttk.Frame(display_frame)
         v_frame.grid(row=0, column=0, padx=20, pady=5)
 
+        v_display_frame = tk.Frame(v_frame, bg="black")
+        v_display_frame.pack()
         self.voltage_display = tk.Label(
-            v_frame, text="00.00", font=("Courier", 48, "bold"),
-            fg="#00aa00", bg="black", width=6, anchor="e"
+            v_display_frame, text="00.00", font=("Courier", 48, "bold"),
+            fg="#00aa00", bg="black", padx=10
         )
-        self.voltage_display.pack()
+        self.voltage_display.pack(pady=(12, 2))
         ttk.Label(v_frame, text="Volts", font=("Arial", 12)).pack()
 
         # Current display
         c_frame = ttk.Frame(display_frame)
         c_frame.grid(row=0, column=1, padx=20, pady=5)
 
+        c_display_frame = tk.Frame(c_frame, bg="black")
+        c_display_frame.pack()
         self.current_display = tk.Label(
-            c_frame, text="0.000", font=("Courier", 48, "bold"),
-            fg="#00aa00", bg="black", width=6, anchor="e"
+            c_display_frame, text="0.000", font=("Courier", 48, "bold"),
+            fg="#00aa00", bg="black", padx=10
         )
-        self.current_display.pack()
+        self.current_display.pack(pady=(12, 2))
         ttk.Label(c_frame, text="Amps", font=("Arial", 12)).pack()
 
         # Mode indicator
