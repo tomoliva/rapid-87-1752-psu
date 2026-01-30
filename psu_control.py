@@ -10,8 +10,36 @@ import serial
 import serial.tools.list_ports
 import threading
 import time
+import sys
 from dataclasses import dataclass
 from typing import Optional, Callable
+
+
+def check_port_available(port: str) -> tuple[bool, str]:
+    """Check if a serial port is available. Returns (available, reason)."""
+    try:
+        ser = serial.Serial(port, 9600, timeout=0.1)
+        ser.close()
+        return True, "available"
+    except serial.SerialException as e:
+        if "busy" in str(e).lower() or "in use" in str(e).lower() or "permission" in str(e).lower():
+            return False, "in use by another application"
+        return False, str(e)
+    except Exception as e:
+        return False, str(e)
+
+
+def get_port_status() -> tuple[list, list]:
+    """Get lists of available and busy ports. Returns (available, busy)."""
+    available = []
+    busy = []
+    for p in serial.tools.list_ports.comports():
+        is_available, reason = check_port_available(p.device)
+        if is_available:
+            available.append(p.device)
+        else:
+            busy.append((p.device, reason))
+    return available, busy
 
 
 @dataclass
@@ -498,11 +526,17 @@ class PSUControlGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _refresh_ports(self):
-        """Refresh available serial ports"""
+        """Refresh available serial ports, preferring available ones"""
         ports = [p.device for p in serial.tools.list_ports.comports()]
         self.port_combo['values'] = ports
+
+        # If no port selected yet, prefer an available port
         if ports and not self.port_var.get():
-            self.port_var.set(ports[0])
+            available, busy = get_port_status()
+            if available:
+                self.port_var.set(available[0])
+            else:
+                self.port_var.set(ports[0])
 
     def _voltage_scale_changed(self, value):
         """Handle voltage scale change"""
@@ -574,8 +608,24 @@ class PSUControlGUI:
                     self.log("Port open but PSU not responding")
                     self.status_label.config(text="No Response", foreground="orange")
             else:
-                self.log("Connection failed")
-                messagebox.showerror("Error", "Failed to connect to PSU")
+                # Check why connection failed
+                port = self.psu.port
+                is_available, reason = check_port_available(port)
+                available, busy = get_port_status()
+
+                if not is_available:
+                    self.log(f"Port {port} is {reason}")
+                    self.status_label.config(text="Port Busy", foreground="orange")
+
+                    msg = f"Cannot open {port}: {reason}\n\n"
+                    if available:
+                        msg += f"Available ports: {', '.join(available)}"
+                    else:
+                        msg += "No available ports found."
+                    messagebox.showerror("Connection Failed", msg)
+                else:
+                    self.log("Connection failed")
+                    messagebox.showerror("Error", f"Failed to connect to {port}")
 
     def start_polling(self):
         """Start background polling thread"""
@@ -1020,5 +1070,38 @@ class PSUControlGUI:
 
 
 if __name__ == "__main__":
+    # Check for available serial ports before starting
+    available, busy = get_port_status()
+
+    if not available and not busy:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "No Serial Ports",
+            "No serial ports detected.\n\n"
+            "Please connect a USB-to-RS485 adapter."
+        )
+        root.destroy()
+        sys.exit(1)
+
+    if not available and busy:
+        busy_list = "\n".join([f"  {port}: {reason}" for port, reason in busy])
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "No Available Ports",
+            f"All serial ports are in use:\n\n{busy_list}\n\n"
+            "Please close other applications using these ports,\n"
+            "or connect another USB-to-RS485 adapter."
+        )
+        root.destroy()
+        sys.exit(1)
+
+    # Show port status in console
+    if available:
+        print(f"Available ports: {', '.join(available)}")
+    if busy:
+        print(f"Busy ports: {', '.join([p for p, r in busy])}")
+
     app = PSUControlGUI()
     app.run()
