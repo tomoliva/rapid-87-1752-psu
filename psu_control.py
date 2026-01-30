@@ -37,7 +37,13 @@ def get_port_status() -> tuple[list, list]:
     available = []
     busy = []
     for p in serial.tools.list_ports.comports():
+        # Skip virtual ttyS* ports that typically don't work
+        if p.device.startswith('/dev/ttyS') and p.description in ('n/a', 'ttyS'):
+            continue
         is_available, reason = check_port_available(p.device)
+        # Skip ports with I/O errors (non-functional virtual ports)
+        if "Input/output error" in reason:
+            continue
         if is_available:
             available.append(p.device)
         else:
@@ -581,7 +587,11 @@ class PSUControlGUI:
 
     def _refresh_ports(self):
         """Refresh available serial ports, preferring available ones"""
-        ports = [p.device for p in serial.tools.list_ports.comports()]
+        # Filter out virtual ttyS* ports that typically don't work
+        ports = [
+            p.device for p in serial.tools.list_ports.comports()
+            if not (p.device.startswith('/dev/ttyS') and p.description in ('n/a', 'ttyS'))
+        ]
         self.port_combo['values'] = ports
 
         # If no port selected yet, prefer an available port
@@ -589,7 +599,7 @@ class PSUControlGUI:
             available, busy = get_port_status()
             if available:
                 self.port_var.set(available[0])
-            else:
+            elif ports:
                 self.port_var.set(ports[0])
 
     def _voltage_scale_changed(self, value):
