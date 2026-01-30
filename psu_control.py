@@ -313,10 +313,227 @@ class PSUSerial:
         resp = self.send_command_with_params("SOUT", "1")
         return "OK" in resp
 
+    @property
+    def protocol_name(self) -> str:
+        return "Rapid/Manson"
 
-def guess_psu_model(max_voltage: float, max_current: float) -> str:
-    """Guess PSU model from GMAX values"""
-    # Known OEM variants based on max ratings
+
+class PSUSCPI:
+    """SCPI protocol handler for Array 366x and similar PSUs"""
+
+    def __init__(self, port: str = '/dev/ttyUSB0', baudrate: int = 9600):
+        self.port = port
+        self.baudrate = baudrate
+        self.serial: Optional[serial.Serial] = None
+        self.lock = threading.Lock()
+        self.max_voltage: float = 120.0
+        self.max_current: float = 4.2
+        self.identity: str = ""
+
+    def connect(self) -> bool:
+        """Connect to the PSU"""
+        try:
+            self.serial = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=8,
+                parity='N',
+                stopbits=1,
+                timeout=1.0
+            )
+            time.sleep(0.1)
+            self.serial.reset_input_buffer()
+            return True
+        except Exception as e:
+            print(f"Connection error: {e}")
+            return False
+
+    def disconnect(self):
+        """Disconnect from the PSU"""
+        if self.serial and self.serial.is_open:
+            self.serial.close()
+        self.serial = None
+
+    def send_command(self, cmd: str) -> str:
+        """Send SCPI command and return response"""
+        if not self.serial or not self.serial.is_open:
+            return ""
+
+        with self.lock:
+            try:
+                self.serial.reset_input_buffer()
+                full_cmd = f"{cmd}\n"
+                self.serial.write(full_cmd.encode('ascii'))
+                self.serial.flush()
+                time.sleep(0.1)
+
+                # For queries, read response
+                if '?' in cmd:
+                    response = self.serial.read_until(b'\n', size=500)
+                    return response.decode('ascii', errors='replace').strip()
+                return "OK"
+            except Exception as e:
+                print(f"Command error: {e}")
+                return ""
+
+    def get_identity(self) -> str:
+        """Query device identity"""
+        resp = self.send_command("*IDN?")
+        if resp:
+            self.identity = resp
+        return resp
+
+    def get_max(self) -> tuple[float, float]:
+        """Get max voltage and current - query or use defaults from identity"""
+        # Try to get from device, fall back to parsing identity or defaults
+        # Array 3664A: 120V/4.2A
+        if "3664" in self.identity:
+            self.max_voltage = 120.0
+            self.max_current = 4.2
+        elif "3663" in self.identity:
+            self.max_voltage = 80.0
+            self.max_current = 6.5
+        elif "3662" in self.identity:
+            self.max_voltage = 60.0
+            self.max_current = 8.5
+        elif "3661" in self.identity:
+            self.max_voltage = 40.0
+            self.max_current = 12.0
+        return (self.max_voltage, self.max_current)
+
+    def get_setpoints(self) -> tuple[float, float]:
+        """Get voltage and current setpoints"""
+        v = 0.0
+        c = 0.0
+        try:
+            resp = self.send_command("VOLT?")
+            if resp:
+                v = float(resp)
+            resp = self.send_command("CURR?")
+            if resp:
+                c = float(resp)
+        except ValueError:
+            pass
+        return (v, c)
+
+    def get_output(self) -> tuple[float, float, str]:
+        """Get actual output voltage, current, and mode"""
+        v = 0.0
+        c = 0.0
+        mode = "CV"
+        try:
+            resp = self.send_command("MEAS:VOLT?")
+            if resp:
+                v = float(resp)
+            resp = self.send_command("MEAS:CURR?")
+            if resp:
+                c = float(resp)
+            # Determine mode from setpoint vs actual
+            v_set, c_set = self.get_setpoints()
+            if c_set > 0 and c >= c_set * 0.99:
+                mode = "CC"
+        except ValueError:
+            pass
+        return (v, c, mode)
+
+    def get_ovp(self) -> float:
+        """Get OVP limit - may not be supported on all SCPI PSUs"""
+        try:
+            resp = self.send_command("VOLT:PROT?")
+            if resp:
+                return float(resp)
+        except ValueError:
+            pass
+        return self.max_voltage
+
+    def enter_remote(self) -> bool:
+        """Enter remote mode - SCPI uses SYST:REM"""
+        self.send_command("SYST:REM")
+        return True
+
+    def exit_remote(self) -> bool:
+        """Exit remote mode - SCPI uses SYST:LOC"""
+        self.send_command("SYST:LOC")
+        return True
+
+    def set_voltage(self, voltage: float) -> bool:
+        """Set output voltage"""
+        voltage = max(0, min(self.max_voltage, voltage))
+        self.send_command(f"VOLT {voltage:.3f}")
+        return True
+
+    def set_current(self, current: float) -> bool:
+        """Set current limit"""
+        current = max(0, min(self.max_current, current))
+        self.send_command(f"CURR {current:.3f}")
+        return True
+
+    def set_ovp(self, voltage: float) -> bool:
+        """Set OVP limit"""
+        voltage = max(0, min(self.max_voltage, voltage))
+        self.send_command(f"VOLT:PROT {voltage:.3f}")
+        return True
+
+    def output_on(self) -> bool:
+        """Enable output"""
+        self.send_command("OUTP ON")
+        return True
+
+    def output_off(self) -> bool:
+        """Disable output"""
+        self.send_command("OUTP OFF")
+        return True
+
+    @property
+    def protocol_name(self) -> str:
+        return "SCPI"
+
+
+def detect_psu_protocol(port: str, baudrate: int = 9600):
+    """Auto-detect PSU protocol and return appropriate handler"""
+    # Try SCPI first (query identity)
+    psu = PSUSCPI(port, baudrate)
+    if psu.connect():
+        identity = psu.get_identity()
+        if identity and ("ARRAY" in identity.upper() or "," in identity):
+            print(f"Detected SCPI PSU: {identity}")
+            return psu
+        psu.disconnect()
+
+    # Try Rapid/Manson protocol
+    psu = PSUSerial(port, '01', baudrate)
+    if psu.connect():
+        resp = psu.send_command("GMAX")
+        if "OK" in resp:
+            print(f"Detected Rapid/Manson PSU")
+            return psu
+        psu.disconnect()
+
+    return None
+
+
+def guess_psu_model(max_voltage: float, max_current: float, protocol: str = "Rapid/Manson", identity: str = "") -> str:
+    """Guess PSU model from max values or identity string"""
+
+    # SCPI devices - check identity first
+    if protocol == "SCPI" and identity:
+        if "ARRAY" in identity.upper():
+            # Parse Array model from identity
+            if "3664" in identity:
+                return "Array 3664A (120V/4.2A)"
+            elif "3663" in identity:
+                return "Array 3663A (80V/6.5A)"
+            elif "3662" in identity:
+                return "Array 3662A (60V/8.5A)"
+            elif "3661" in identity:
+                return "Array 3661A (40V/12A)"
+            elif "3660" in identity:
+                return "Array 3660A (30V/16A)"
+            else:
+                return f"Array PSU ({max_voltage:.0f}V/{max_current:.1f}A)"
+        return f"SCPI PSU ({max_voltage:.0f}V/{max_current:.1f}A)"
+
+    # Rapid/Manson protocol - known OEM variants based on max ratings
     models = {
         (30.0, 3.00): "Rapid 87-1752 / PeakTech 1860 / Manson NDP-4303",
         (30.0, 3.10): "Rapid 87-1752 / PeakTech 1860 / Manson NDP-4303",
@@ -621,25 +838,27 @@ class PSUControlGUI:
         self.log_text.see("end")
 
     def auto_connect(self):
-        """Attempt auto-connection on startup"""
-        self.last_selected_port = self.port_var.get()
-        if self.psu.connect():
-            self.psu.address = self.addr_var.get()
-            # Verify PSU responds
-            test = self.psu.send_command("GMAX")
-            if "OK" in test:
-                self.state.connected = True
-                self.connect_btn.config(text="Disconnect")
-                self.status_label.config(text="Connected", foreground="green")
-                self.log("Connected to PSU")
-                self._update_port_indicator(True)
-                self.start_polling()
-                self.refresh_state()
-            else:
-                self.psu.disconnect()
-                self.log("Port open but PSU not responding")
-                self.status_label.config(text="No Response", foreground="orange")
-                self._update_port_indicator(False)
+        """Attempt auto-connection on startup with protocol auto-detection"""
+        port = self.port_var.get()
+        self.last_selected_port = port
+
+        # Try auto-detection
+        detected_psu = detect_psu_protocol(port)
+        if detected_psu:
+            self.psu = detected_psu
+            if hasattr(self.psu, 'address'):
+                self.psu.address = self.addr_var.get()
+            self.state.connected = True
+            self.connect_btn.config(text="Disconnect")
+            self.status_label.config(text=f"Connected ({self.psu.protocol_name})", foreground="green")
+            self.log(f"Connected via {self.psu.protocol_name} protocol")
+            self._update_port_indicator(True)
+            self.start_polling()
+            self.refresh_state()
+        else:
+            self.log("Port open but no PSU detected")
+            self.status_label.config(text="No Response", foreground="orange")
+            self._update_port_indicator(False)
 
     def toggle_connection(self):
         """Connect or disconnect from PSU"""
@@ -656,35 +875,31 @@ class PSUControlGUI:
             self._update_port_indicator(False)
             self.log("Disconnected")
         else:
-            self.psu.port = self.port_var.get()
-            self.psu.address = self.addr_var.get()
-            self.last_selected_port = self.psu.port
+            port = self.port_var.get()
+            self.last_selected_port = port
             self.reconnect_attempts = 0
-            if self.psu.connect():
-                # Verify PSU responds
-                test = self.psu.send_command("GMAX")
-                if "OK" in test:
-                    self.state.connected = True
-                    self.connect_btn.config(text="Disconnect")
-                    self.status_label.config(text="Connected", foreground="green")
-                    self._update_port_indicator(True)
-                    self.log(f"Connected to {self.psu.port}")
-                    self.start_polling()
-                    self.refresh_state()
-                else:
-                    self.psu.disconnect()
-                    self.log("Port open but PSU not responding")
-                    self.status_label.config(text="No Response", foreground="orange")
+
+            # Try auto-detection
+            detected_psu = detect_psu_protocol(port)
+            if detected_psu:
+                self.psu = detected_psu
+                if hasattr(self.psu, 'address'):
+                    self.psu.address = self.addr_var.get()
+                self.state.connected = True
+                self.connect_btn.config(text="Disconnect")
+                self.status_label.config(text=f"Connected ({self.psu.protocol_name})", foreground="green")
+                self._update_port_indicator(True)
+                self.log(f"Connected to {port} via {self.psu.protocol_name}")
+                self.start_polling()
+                self.refresh_state()
             else:
                 # Check why connection failed
-                port = self.psu.port
                 is_available, reason = check_port_available(port)
                 available, busy = get_port_status()
 
                 if not is_available:
                     self.log(f"Port {port} is {reason}")
                     self.status_label.config(text="Port Busy", foreground="orange")
-
                     msg = f"Cannot open {port}: {reason}\n\n"
                     if available:
                         msg += f"Available ports: {', '.join(available)}"
@@ -692,8 +907,9 @@ class PSUControlGUI:
                         msg += "No available ports found."
                     messagebox.showerror("Connection Failed", msg)
                 else:
-                    self.log("Connection failed")
-                    messagebox.showerror("Error", f"Failed to connect to {port}")
+                    self.log("No PSU detected on port")
+                    self.status_label.config(text="No Response", foreground="orange")
+                    messagebox.showerror("Connection Failed", f"No PSU detected on {port}\n\nTried Rapid/Manson and SCPI protocols.")
 
     def start_polling(self):
         """Start background polling thread"""
@@ -763,7 +979,9 @@ class PSUControlGUI:
 
         # Get max ratings and update window title
         self.state.max_voltage, self.state.max_current = self.psu.get_max()
-        model = guess_psu_model(self.state.max_voltage, self.state.max_current)
+        identity = getattr(self.psu, 'identity', '')
+        protocol = getattr(self.psu, 'protocol_name', 'Rapid/Manson')
+        model = guess_psu_model(self.state.max_voltage, self.state.max_current, protocol, identity)
         self.root.title(f"PSU Control - {model}")
 
         # Update setpoint label
@@ -911,24 +1129,18 @@ class PSUControlGUI:
             if port in available_ports and self.reconnect_attempts < self.max_reconnect_attempts:
                 self.log(f"Port {port} detected, reconnecting...")
                 self.reconnect_attempts += 1
-                self.psu.port = port
-                if self.psu.connect():
-                    # Verify PSU responds
-                    test = self.psu.send_command("GMAX")
-                    if "OK" in test:
-                        self.state.connected = True
-                        self.connect_btn.config(text="Disconnect")
-                        self.status_label.config(text="Connected", foreground="green")
-                        self.log("Reconnected successfully")
-                        self.reconnect_attempts = 0
-                        self.start_polling()
-                        self.refresh_state()
-                        self._update_port_indicator(True)
-                    else:
-                        self.psu.disconnect()
-                        self.log(f"Port open but PSU not responding (attempt {self.reconnect_attempts})")
-                        self.status_label.config(text="No Response", foreground="orange")
-                else:
+                detected_psu = detect_psu_protocol(port)
+                if detected_psu:
+                    self.psu = detected_psu
+                    self.state.connected = True
+                    self.connect_btn.config(text="Disconnect")
+                    self.status_label.config(text=f"Connected ({self.psu.protocol_name})", foreground="green")
+                    self.log(f"Reconnected via {self.psu.protocol_name}")
+                    self.reconnect_attempts = 0
+                    self.start_polling()
+                    self.refresh_state()
+                    self._update_port_indicator(True)
+                elif check_port_available(port)[0]:
                     self.log(f"Reconnect failed (attempt {self.reconnect_attempts})")
 
         # Update port combo highlighting
