@@ -11,6 +11,9 @@ import serial.tools.list_ports
 import threading
 import time
 import sys
+import platform
+import os
+import glob
 from dataclasses import dataclass
 from typing import Optional, Callable
 
@@ -40,6 +43,57 @@ def get_port_status() -> tuple[list, list]:
         else:
             busy.append((p.device, reason))
     return available, busy
+
+
+def check_usb_power_management() -> list[str]:
+    """Check for USB power management issues. Returns list of warnings."""
+    warnings = []
+    system = platform.system()
+
+    if system == "Linux":
+        # Check for USB autosuspend on serial ports
+        try:
+            # Find USB serial devices
+            for port_info in serial.tools.list_ports.comports():
+                port = port_info.device
+                # Try to find the USB device path for this port
+                # /sys/class/tty/ttyUSB0/device -> ../../1-2:1.0
+                tty_name = os.path.basename(port)
+                device_path = f"/sys/class/tty/{tty_name}/device"
+
+                if os.path.exists(device_path):
+                    # Navigate up to find USB device
+                    real_path = os.path.realpath(device_path)
+                    # Go up to USB device level (past interface)
+                    usb_device = os.path.dirname(os.path.dirname(real_path))
+                    power_control = os.path.join(usb_device, "power", "control")
+
+                    if os.path.exists(power_control):
+                        try:
+                            with open(power_control, 'r') as f:
+                                control = f.read().strip()
+                            if control == "auto":
+                                warnings.append(
+                                    f"{port}: USB autosuspend enabled - may cause timeouts.\n"
+                                    f"  Fix: sudo echo 'on' > {power_control}\n"
+                                    f"  Or install udev rule: 99-ch340-no-suspend.rules"
+                                )
+                        except PermissionError:
+                            pass  # Can't read, skip
+        except Exception:
+            pass  # Don't fail on check errors
+
+    elif system == "Windows":
+        # Check for common Windows issues
+        warnings.append(
+            "Windows users: If you experience connection drops, check:\n"
+            "  1. Device Manager > USB Root Hub > Power Management\n"
+            "     Uncheck 'Allow computer to turn off this device'\n"
+            "  2. Power Options > USB selective suspend > Disabled\n"
+            "  3. CH340 driver installed (if using CH340 adapter)"
+        )
+
+    return warnings
 
 
 @dataclass
@@ -1103,5 +1157,18 @@ if __name__ == "__main__":
     if busy:
         print(f"Busy ports: {', '.join([p for p, r in busy])}")
 
+    # Check for USB power management issues
+    power_warnings = check_usb_power_management()
+    for warning in power_warnings:
+        print(f"WARNING: {warning}")
+
     app = PSUControlGUI()
+
+    # Log power management warnings in the GUI
+    if power_warnings and platform.system() == "Linux":
+        for warning in power_warnings:
+            # Only show actionable Linux warnings in GUI (not generic Windows advice)
+            if "autosuspend enabled" in warning:
+                app.root.after(500, lambda w=warning: app.log(f"WARNING: {w.split(chr(10))[0]}"))
+
     app.run()
