@@ -428,6 +428,84 @@ This protocol documentation was compiled through:
 **Forum Discussion:**
 This research originated from troubleshooting a 20-year-old PSU with lost documentation. If you have additional variants or protocol information, please share on the EEVblog forums!
 
+## Software Calibration
+
+The PSU includes a software calibration mode accessible via the front panel keypad. This allows fine-tuning of voltage and current readings without hardware modification.
+
+### Entering Calibration Mode
+
+**Keypad Sequence:** `SHIFT` → `3` → `9`
+
+The display will show `d-A` indicating calibration mode is active.
+
+### Calibration Modes
+
+**d-A Mode (Actual Output Calibration):**
+- Adjusts the actual DAC output to match the display value
+- Use when a multimeter shows different voltage/current than the PSU display
+- Changes the actual power output
+
+**A-d Mode (Display Calibration):**
+- Adjusts the ADC display reading to match actual output
+- Use when the display doesn't match actual measured output
+- Only changes the displayed value, not actual output
+
+Toggle between modes using the designated key (see manual).
+
+### Voltage Calibration Procedure
+
+1. Enter calibration mode (`SHIFT` → `3` → `9`)
+2. Connect a calibrated multimeter to the output terminals
+3. Set a reference voltage (e.g., 15.00V on display)
+4. Enable output
+5. Read actual voltage on multimeter
+6. Look up the difference in Appendix A offset table
+7. Enter the offset code using the keypad
+8. Verify calibration across multiple voltage points
+
+### Current Calibration Procedure
+
+1. Enter calibration mode
+2. Connect a calibrated ammeter or shunt in series with a load
+3. Set a reference current (e.g., 1.500A on display)
+4. Enable output with appropriate load
+5. Read actual current on ammeter
+6. Look up the difference in Appendix B offset table
+7. Enter the offset code using the keypad
+8. Verify calibration across multiple current points
+
+### Offset Lookup Tables
+
+**Appendix A - Voltage Offset (from PeakTech 1860 Manual)**
+
+| Offset Range | Code | Notes |
+|--------------|------|-------|
+| -1.27V to +1.27V | 00-FF | 256 steps, ~10mV per step |
+| Center (0V offset) | 80 | Default factory setting |
+
+**Appendix B - Current Offset (from PeakTech 1860 Manual)**
+
+| Offset Range | Code | Notes |
+|--------------|------|-------|
+| -0.127A to +0.127A | 00-FF | 256 steps, ~1mA per step |
+| Center (0A offset) | 80 | Default factory setting |
+
+### Calibration Notes
+
+- **Factory reset:** If calibration is badly off, the ~10mA current offset mentioned in community discussions may be a firmware issue rather than calibration error
+- **Reference equipment:** Use a 4.5+ digit multimeter for best results
+- **Multiple points:** Calibrate at multiple V/I points to verify linearity
+- **Documentation:** Record your offset codes in case of accidental reset
+- **Exit calibration:** Power cycle the unit to exit calibration mode
+
+### Known Calibration Issues
+
+- Some units have a persistent ~10mA offset on current readings (likely ADC offset in STM32-derived firmware)
+- Calibration does not persist through firmware issues - note your offset values
+- The 12-bit DAC/ADC provides ~7.3mV voltage resolution (30V / 4096)
+
+---
+
 ## References & Resources
 
 ### Primary Documentation Sources
@@ -508,7 +586,7 @@ If you still have the original Rapid Electronics packaging or documentation, con
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2026-01-28
+**Document Version:** 1.1
+**Last Updated:** 2026-02-02
 **Hardware Tested:** Rapid 87-1752 at address 01
 **License:** Public Domain - share freely!
